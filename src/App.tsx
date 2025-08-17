@@ -16,6 +16,31 @@ import {
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 
+// --- NEW: Import Supabase credentials from your .env file ---
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// --- NEW: A reusable function for calling your Supabase functions ---
+const callSupabaseFunction = async (functionName: string, body: any, isFormData = false) => {
+  const headers: HeadersInit = isFormData ? {} : { 'Content-Type': 'application/json' };
+  
+  // Supabase requires the Authorization header for all function calls
+  headers['Authorization'] = `Bearer ${SUPABASE_ANON_KEY}`;
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+    method: 'POST',
+    headers: headers,
+    body: isFormData ? body : JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to call function "${functionName}". Status: ${response.status}. Message: ${errorText}`);
+  }
+
+  return response.json();
+};
+
 interface Summary {
   id: string;
   content: string;
@@ -56,27 +81,30 @@ function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (type === 'text' && file.type === 'text/plain') {
+    if (type === 'text') {
       const reader = new FileReader();
       reader.onload = (e) => {
         setTranscript(e.target?.result as string);
         showMessage('Text file uploaded successfully!', 'success');
       };
       reader.readAsText(file);
-    } else if (type === 'voice' && file.type.startsWith('audio/')) {
+    } else if (type === 'voice') {
       setIsProcessingVoice(true);
       try {
-        // Simulate voice processing - in real implementation, you'd use speech-to-text API
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        setTranscript(`[Voice transcript from ${file.name}]\n\nThis is a simulated transcript from the uploaded voice file. In a real implementation, this would be processed using a speech-to-text service like OpenAI Whisper, Google Speech-to-Text, or similar services.\n\nThe audio file "${file.name}" would be converted to text and displayed here.`);
+        const formData = new FormData();
+        formData.append('audio', file);
+        
+        // --- NEW: Call the voice-to-text function ---
+        const data = await callSupabaseFunction('voice-to-text', formData, true);
+        
+        setTranscript(data.transcription);
         showMessage('Voice file processed successfully!', 'success');
       } catch (error) {
         showMessage('Error processing voice file. Please try again.', 'error');
+        console.error('Error processing voice file:', error);
       } finally {
         setIsProcessingVoice(false);
       }
-    } else {
-      showMessage(`Invalid file type for ${type} upload.`, 'error');
     }
   };
 
@@ -90,22 +118,12 @@ function App() {
     setMessage('');
 
     try {
-      const response = await fetch('/api/summarize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          transcript: transcript.trim(),
-          prompt: customPrompt.trim(),
-        }),
+      // --- UPDATED: Use the reusable function to call 'summarize' ---
+      const data = await callSupabaseFunction('summarize', {
+        transcript: transcript.trim(),
+        prompt: customPrompt.trim(),
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to generate summary');
-      }
-
-      const data = await response.json();
+      
       setSummary(data.summary);
       setSummaryTitle(`Summary - ${new Date().toLocaleDateString()}`);
       showMessage('Summary generated successfully!', 'success');
@@ -195,22 +213,13 @@ function App() {
     setIsSending(true);
 
     try {
-      const response = await fetch('/api/send-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipients: emailRecipients.split(',').map(email => email.trim()),
-          summary: summary.trim(),
-          originalPrompt: customPrompt.trim(),
-          title: summaryTitle
-        }),
+      // --- UPDATED: Use the reusable function to call 'send-email' ---
+      await callSupabaseFunction('send-email', {
+        recipients: emailRecipients.split(',').map(email => email.trim()),
+        summary: summary.trim(),
+        originalPrompt: customPrompt.trim(),
+        title: summaryTitle
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to send email');
-      }
 
       showMessage('Summary sent successfully!', 'success');
       setEmailRecipients('');
