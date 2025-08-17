@@ -1,21 +1,21 @@
 /*
   # Voice-to-Text Edge Function
-
+  
   1. Purpose
     - Accepts audio files and converts them to text
-    - Uses OpenAI Whisper API for speech-to-text conversion
+    - Uses AssemblyAI API for speech-to-text conversion
     - Returns transcribed text to frontend
-
+  
   2. Features
-    - Multiple audio format support
-    - OpenAI Whisper integration
+    - Multipart form data handling for audio files
+    - AssemblyAI integration
     - Error handling and response formatting
     - CORS support for frontend requests
 */
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
@@ -29,9 +29,9 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (req.method !== "POST") {
-      return new Response("Method not allowed", { 
-        status: 405, 
-        headers: corsHeaders 
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: corsHeaders,
       });
     }
 
@@ -39,72 +39,112 @@ Deno.serve(async (req: Request) => {
     const audioFile = formData.get("audio") as File;
 
     if (!audioFile) {
-      return new Response("No audio file provided", { 
-        status: 400, 
-        headers: corsHeaders 
+      return new Response("No audio file provided", {
+        status: 400,
+        headers: corsHeaders,
       });
     }
 
-    // Using OpenAI Whisper API for speech-to-text
-    const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
-    
-    if (!openaiApiKey) {
-      console.error("OpenAI API key not found");
-      return new Response("Speech-to-text service not configured", { 
-        status: 500, 
-        headers: corsHeaders 
+    const assemblyAiApiKey = Deno.env.get("ASSEMBLYAI_API_KEY");
+    if (!assemblyAiApiKey) {
+      console.error("AssemblyAI API key not found");
+      return new Response("Speech-to-text service not configured", {
+        status: 500,
+        headers: corsHeaders,
       });
     }
 
-    // Prepare form data for OpenAI Whisper API
-    const whisperFormData = new FormData();
-    whisperFormData.append("file", audioFile);
-    whisperFormData.append("model", "whisper-1");
-    whisperFormData.append("response_format", "text");
-
-    const whisperResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    // AssemblyAI API for file upload
+    const uploadResponse = await fetch("https://api.assemblyai.com/v2/upload", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
+        "Authorization": assemblyAiApiKey,
+        "Content-Type": "application/octet-stream",
       },
-      body: whisperFormData,
+      body: audioFile,
     });
 
-    if (!whisperResponse.ok) {
-      console.error("OpenAI Whisper API error:", await whisperResponse.text());
-      return new Response("Failed to transcribe audio", { 
-        status: 500, 
-        headers: corsHeaders 
+    if (!uploadResponse.ok) {
+      console.error("AssemblyAI upload error:", await uploadResponse.text());
+      return new Response("Failed to upload audio to AssemblyAI", {
+        status: 500,
+        headers: corsHeaders,
+      });
+    }
+    const uploadData = await uploadResponse.json();
+    const audioUrl = uploadData.upload_url;
+
+    // AssemblyAI API for transcription
+    const transcribeResponse = await fetch("https://api.assemblyai.com/v2/transcript", {
+      method: "POST",
+      headers: {
+        "Authorization": assemblyAiApiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        audio_url: audioUrl,
+        // You can add more configuration here, such as language_code
+        // language_code: "en_us",
+      }),
+    });
+
+    if (!transcribeResponse.ok) {
+      console.error("AssemblyAI transcription error:", await transcribeResponse.text());
+      return new Response("Failed to transcribe audio", {
+        status: 500,
+        headers: corsHeaders,
       });
     }
 
-    const transcription = await whisperResponse.text();
+    const transcriptData = await transcribeResponse.json();
+    const transcriptId = transcriptData.id;
+
+    // Poll the API for the transcription result
+    let transcriptionResult;
+    let pollingResponse;
+    do {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      pollingResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+        method: "GET",
+        headers: {
+          "Authorization": assemblyAiApiKey,
+        },
+      });
+      transcriptionResult = await pollingResponse.json();
+    } while (pollingResponse.ok && transcriptionResult.status !== "completed" && transcriptionResult.status !== "error");
+
+    if (transcriptionResult.status === "error") {
+      console.error("AssemblyAI transcription failed:", transcriptionResult.error);
+      return new Response("Transcription failed on AssemblyAI side", {
+        status: 500,
+        headers: corsHeaders,
+      });
+    }
+
+    const transcription = transcriptionResult.text;
 
     if (!transcription) {
-      return new Response("No transcription generated", { 
-        status: 500, 
-        headers: corsHeaders 
+      return new Response("No transcription generated", {
+        status: 500,
+        headers: corsHeaders,
       });
     }
 
-    return new Response(
-      JSON.stringify({ 
-        transcription: transcription.trim(),
-        filename: audioFile.name,
-        size: audioFile.size
-      }),
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders,
-        },
-      }
-    );
+    return new Response(JSON.stringify({
+      transcription: transcription.trim(),
+      filename: audioFile.name,
+      size: audioFile.size,
+    }), {
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders,
+      },
+    });
   } catch (error) {
     console.error("Error in voice-to-text function:", error);
-    return new Response("Internal server error", { 
-      status: 500, 
-      headers: corsHeaders 
+    return new Response("Internal server error", {
+      status: 500,
+      headers: corsHeaders,
     });
   }
 });
