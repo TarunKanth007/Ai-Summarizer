@@ -8,12 +8,6 @@ export default defineConfig({
     exclude: ['lucide-react'],
   },
   server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:54321/functions/v1',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
-    },
+    // No proxy needed, as you are calling the deployed function directly
   },
 });
