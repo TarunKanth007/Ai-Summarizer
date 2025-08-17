@@ -1,21 +1,15 @@
 /*
-  # Email Sending Edge Function
+  # Email Sending Edge Function
 
-  1. Purpose
-    - Sends meeting summary via email to specified recipients
-    - Uses Resend API for reliable email delivery
-    - Formats email with summary content
-
-  2. Features
-    - Multiple recipient support
-    - HTML email formatting
-    - Professional email template
-    - Error handling and delivery confirmation
+  1. Purpose
+    - Sends meeting summary via email to specified recipients
+    - Uses Resend API for reliable email delivery
+    - Formats email with summary content
 */
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
@@ -36,38 +30,28 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (req.method !== "POST") {
-      return new Response("Method not allowed", { 
-        status: 405, 
-        headers: corsHeaders 
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: corsHeaders,
       });
     }
 
     const { recipients, summary, originalPrompt }: EmailRequest = await req.json();
-    const title = (req as any).title || 'Meeting Summary';
+    const title = "AI-Generated Summary";
 
-    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
-      return new Response("Missing or invalid recipients", { 
-        status: 400, 
-        headers: corsHeaders 
+    if (!recipients || recipients.length === 0 || !summary) {
+      return new Response("Missing data", {
+        status: 400,
+        headers: corsHeaders,
       });
     }
 
-    if (!summary) {
-      return new Response("Missing summary content", { 
-        status: 400, 
-        headers: corsHeaders 
-      });
-    }
-
-    // Using Resend for email delivery
-    // You'll need to set RESEND_API_KEY in your Supabase environment variables
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    
     if (!resendApiKey) {
       console.error("Resend API key not found");
-      return new Response("Email service not configured", { 
-        status: 500, 
-        headers: corsHeaders 
+      return new Response("Email service not configured", {
+        status: 500,
+        headers: corsHeaders,
       });
     }
 
@@ -106,7 +90,8 @@ Deno.serve(async (req: Request) => {
     `;
 
     const emailData = {
-      from: "Meeting Summarizer <noreply@yourdomain.com>",
+      // Use the Resend sandbox domain for the 'from' address
+      from: "Meeting Summarizer <onboarding@resend.dev>",
       to: recipients,
       subject: `${title} - ${currentDate}`,
       html: htmlContent,
@@ -122,34 +107,25 @@ Deno.serve(async (req: Request) => {
     });
 
     if (!resendResponse.ok) {
-      console.error("Resend API error:", await resendResponse.text());
-      return new Response("Failed to send email", { 
-        status: 500, 
-        headers: corsHeaders 
+      const errorText = await resendResponse.text();
+      console.error("Resend API error:", errorText);
+      return new Response("Failed to send email", {
+        status: 500,
+        headers: corsHeaders,
       });
     }
 
-    const resendData = await resendResponse.json();
-    console.log("Email sent successfully:", resendData);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: "Email sent successfully",
-        emailId: resendData.id 
-      }),
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders,
-        },
-      }
-    );
+    return new Response(JSON.stringify({ success: true, message: "Email sent" }), {
+      headers: {
+        'Content-Type': 'application/json',
+        ...corsHeaders,
+      },
+    });
   } catch (error) {
     console.error("Error in send-email function:", error);
-    return new Response("Internal server error", { 
-      status: 500, 
-      headers: corsHeaders 
+    return new Response("Internal server error", {
+      status: 500,
+      headers: corsHeaders,
     });
   }
 });
